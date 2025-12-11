@@ -9,9 +9,7 @@ require('dotenv').config(); // For local development
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Security: Add security headers to protect against common vulnerabilities
-// This sets headers like X-Content-Type-Options, X-Frame-Options, etc.
-// Configure CSP to allow Bootstrap CDN for educational purposes
+// Security headers
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -27,40 +25,33 @@ app.use(
   })
 );
 
-// Rate limiting: Prevent abuse by limiting requests per IP address
-// Students learn about resource protection and API quota management
+// Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-// Middleware for static files
+// Static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-
-
-// Main application logic
+// ================== MAIN APP ==================
 (async () => {
   try {
-    // Fetch secrets and set environment variables
-    if (process.env.NODE_ENV === 'production') {
-      console.log('Fetching secrets for production...');
-      process.env.DATABASE_URL = await getSecret('DATABASE_URL');
-      if (!process.env.DATABASE_URL) {
-        throw new Error('DATABASE_URL is not set.');
-      }
+    // Use DATABASE_URL directly from env (set in app.yaml)
+    if (!process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is not set.');
     }
 
-    // Initialize Sequelize
-    // Note: When using Cloud SQL Unix socket, SSL is not needed (proxy handles encryption)
+    // Sequelize connection
     const sequelize = new Sequelize(process.env.DATABASE_URL, {
       dialect: 'postgres',
+      logging: false,
     });
 
-    // Define the Visit model
+    // Visit model
     const Visit = sequelize.define('Visit', {
       ip: { type: DataTypes.STRING },
       user_agent: { type: DataTypes.TEXT },
@@ -72,59 +63,55 @@ app.use(express.static(path.join(__dirname, 'public')));
       visited_at: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
     });
 
-    // Test database connection
+    // Test DB + sync
     await sequelize.authenticate();
     console.log('Database connection established successfully.');
-
-    // Sync models
     await Visit.sync();
 
-    // Routes
+    // ---------- Routes ----------
+
+    // Root
     app.get('/', (req, res) => {
       res.send('App is running and connected to the database.');
     });
-    // Custom modification route
-app.get('/about', (req, res) => {
-  res.send('This is a custom About page added by Aaron.');
-});
 
+    // Custom About route (your modification)
+    app.get('/about', (req, res) => {
+      res.send('This is a custom About page added by Aaron.');
+    });
 
-    // Health check endpoint for Google Cloud Platform monitoring
-    // GCP uses this to verify the app is running correctly and database is connected
+    // Healthcheck for GCP
     app.get('/_health', async (_req, res) => {
       try {
         await sequelize.authenticate();
         res.status(200).json({
           status: 'ok',
           database: 'connected',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       } catch (error) {
         res.status(503).json({
           status: 'error',
           database: 'disconnected',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     });
 
-    // Handle favicon requests to prevent 404 errors in browser console
+    // Favicon
     app.get('/favicon.ico', (_req, res) => {
-      res.status(204).end(); // 204 No Content
+      res.status(204).end();
     });
 
-    // Route: Log client information
-    // Apply rate limiting to prevent abuse
+    // Log client info
     app.get('/api/client-info', apiLimiter, async (req, res) => {
       let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'Unknown';
       const userAgent = req.headers['user-agent'] || 'Unknown';
 
-      // Normalize localhost IPs
       if (ip === '::1' || ip === '127.0.0.1') {
         ip = 'localhost';
       }
 
-      // Fetch geolocation data from ipapi.co (free tier: 1K/day, 30K/month)
       let locationData = {
         city: 'N/A',
         region: 'N/A',
@@ -145,11 +132,9 @@ app.get('/about', (req, res) => {
           };
         } catch (error) {
           console.log('Geolocation API request failed:', error.message);
-          // Keep default 'N/A' values if API fails
         }
       }
 
-      // Store visit in database
       try {
         await Visit.create({
           ip,
@@ -171,12 +156,10 @@ app.get('/about', (req, res) => {
       });
     });
 
-    // Route: Fetch paginated logs
-    // Apply rate limiting and input validation
+    // Paginated logs
     app.get('/api/logs', apiLimiter, async (req, res) => {
       const { page = 1, limit = 10 } = req.query;
 
-      // Input validation: Ensure page and limit are positive integers
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
 
@@ -192,7 +175,7 @@ app.get('/about', (req, res) => {
 
       try {
         const { count, rows } = await Visit.findAndCountAll({
-          offset: offset,
+          offset,
           limit: limitNum,
           order: [['visited_at', 'DESC']],
         });
@@ -209,20 +192,17 @@ app.get('/about', (req, res) => {
       }
     });
 
-
-    // Route: Serve logs.html for /logs
+    // Logs page
     app.get('/logs', (req, res) => {
       res.sendFile(path.join(__dirname, 'public', 'logs.html'));
     });
 
-    // Start the server
+    // Start server
     const server = app.listen(port, () => {
       console.log(`App running at http://localhost:${port}`);
     });
 
-    // Graceful shutdown handler for cloud environments
-    // When GCP stops the instance, it sends SIGTERM signal
-    // This ensures database connections are closed properly before shutdown
+    // Graceful shutdown
     process.on('SIGTERM', async () => {
       console.log('SIGTERM signal received: closing HTTP server');
       server.close(async () => {
