@@ -1,0 +1,13 @@
+steps:
+  # Step 1: Install dependencies
+  - name: "node:22"
+    entrypoint: "npm"
+    args: ["install"]
+
+  # Step 2: Deploy to App Engine
+  - name: "gcr.io/cloud-builders/gcloud"
+    args: ["app", "deploy", "--quiet"]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
