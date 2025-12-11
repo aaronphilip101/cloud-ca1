@@ -1,7 +1,6 @@
 const express = require('express');
 const path = require('path');
 const { Sequelize, DataTypes } = require('sequelize');
-const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const axios = require('axios');
@@ -41,14 +40,7 @@ const apiLimiter = rateLimit({
 // Middleware for static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Function to fetch secrets from Google Secret Manager
-async function getSecret(secretName) {
-  const client = new SecretManagerServiceClient();
-  const [version] = await client.accessSecretVersion({
-    name: `projects/${process.env.GOOGLE_CLOUD_PROJECT}/secrets/${secretName}/versions/latest`,
-  });
-  return version.payload.data.toString();
-}
+
 
 // Main application logic
 (async () => {
